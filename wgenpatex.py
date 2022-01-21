@@ -2,7 +2,7 @@
 #
 # F. Altekrueger, J. Hertrich.
 # WPPNets: Unsupervised CNN Training with Wasserstein Patch Priors for Image Superresolution.
-# ArXiv preprint, to appear.
+# ArXiv Preprint#2201.08157
 #
 # Please cite the paper, if you use the code.
 # The file is an adapted version from 
