@@ -1,9 +1,9 @@
 # WPPNets: Unsupervised CNN Training with Wasserstein Patch Priors for Image Superresolution
 
-This code belongs to the paper [1] Please cite the paper, if you use this code.
+This code belongs to the paper [1] available at https://arxiv.org/abs/2201.08157.
+Please cite the paper, if you use this code.
 
-The paper [1] is available at ...
-
+The paper [1] is 
 The repository contains an implementation of WPPNets as introduced in [1]. It contains scripts for reproducing the numerical example Texture superresolution in Section 5.2.
 
 Moreover, the file `wgenpatex.py` is adapted from [2] available at https://github.com/johertrich/Wasserstein_Patch_Prior and is adapted from [3]. Furthermore, the folder `model` is adapted from [5] available at https://github.com/hellloxiaotian/ACNet.
@@ -45,7 +45,7 @@ The script `run_floor.py` is the implementation of the superresolution example i
 
 [1] F. Altekrueger, J. Hertrich.  
 WPPNets: Unsupervised CNN Training with Wasserstein Patch Priors for Image Superresolution.  
-ArXiv Preprint#...
+ArXiv Preprint#2201.08157
 
 [2] J. Hertrich, A. Houdard and C. Redenbach.  
 Wasserstein Patch Prior for Image Superresolution.  
@@ -53,7 +53,7 @@ ArXiv Preprint#2109.12880
 
 [3] A. Houdard, A. Leclaire, N. Papadakis and J. Rabin.  
 Wasserstein Generative Models for Patch-based Texture Synthesis.  
-ArXiv Preprin#2007.03408
+ArXiv Preprint#2007.03408
 
 [4] G. Kylberg.  
 The Kylberg texture dataset v. 1.0.  
