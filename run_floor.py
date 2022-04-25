@@ -97,9 +97,10 @@ net = model.small_acnet.Net(scale=4).to(device=DEVICE)
 
 t = Trainset()
 val = Validationset()	
+lr_size = t[0][0].shape[2]
 
 args=argparse.Namespace()
-args.lam=0.02
+args.lam=12.5/lr_size**2
 args.n_patches_out=10000
 args.patch_size=6
 args.n_iter_psi=20
