@@ -63,11 +63,11 @@ The script `run_WPPFlow.py` is the implementation of the uncertainty quantificat
 
 [1] F. Altekrüger, J. Hertrich.  
 WPPNets and WPPFlows: The Power of Wasserstein Patch Priors for Superresolution.  
-ArXiv Preprint#2201.08157
+Accepted in: SIAM Journal on Imaging Sciences.
 
 [2] J. Hertrich, A. Houdard and C. Redenbach.  
 Wasserstein Patch Prior for Image Superresolution.  
-ArXiv Preprint#2109.12880
+IEEE Transactions on Computational Imaging, vol. 8, pp. 693-704, 2022.
 
 [3] A. Houdard, A. Leclaire, N. Papadakis and J. Rabin.  
 Wasserstein Generative Models for Patch-based Texture Synthesis.  
