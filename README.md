@@ -1,6 +1,6 @@
 # WPPNets and WPPFlows: The Power of Wasserstein Patch Priors for Superresolution. 
 
-This code belongs to the paper [1] available at https://arxiv.org/abs/2201.08157 .
+This code belongs to the paper [1] available at https://epubs.siam.org/doi/full/10.1137/22M1496542. A preprint can be found at https://arxiv.org/abs/2201.08157.
 Please cite the paper, if you use this code.
 
 The repository contains implementations of WPPNets and WPPFlows as introduced in [1]. It contains scripts for reproducing the numerical examples from Section 5.
@@ -63,7 +63,7 @@ The script `run_WPPFlow.py` is the implementation of the uncertainty quantificat
 
 [1] F. Altekrüger, J. Hertrich.  
 WPPNets and WPPFlows: The Power of Wasserstein Patch Priors for Superresolution.  
-Accepted in: SIAM Journal on Imaging Sciences.
+SIAM Journal on Imaging Sciences, vol. 16(3), pp. 1033-1067.
 
 [2] J. Hertrich, A. Houdard and C. Redenbach.  
 Wasserstein Patch Prior for Image Superresolution.  
