@@ -2,223 +2,226 @@
 #
 # F. Altekrüger and J. Hertrich. 
 # WPPNets and WPPFlows: The Power of Wasserstein Patch Priors for Superresolution. 
-# ArXiv Preprint#2201.08157
+# SIAM Journal on Imaging Sciences, vol. 16(3), pp. 1033-1067.
 #
 # Please cite the paper, if you use the code.
 #
-# The script reproduces the numerical example with the material 'FS' in the paper.
+# The script reproduces the numerical example with the material 'FS'
+# and 'FS_registered' in the paper.
 
 import torch
 from torch import nn
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('agg')
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+import argparse
+import json
 import os
 import skimage.io as io
-import model.small_acnet
-import random
-import utils
-import argparse
 from tqdm import tqdm
+import model.small_acnet
+import utils
 
+torch.manual_seed(0)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(DEVICE)
 
-def Downsample(scale = 0.25, gaussian_std = 2):
-    ''' 
-    downsamples an img by factor 4 using gaussian downsample from utils.py
-    '''
-    if scale > 1:
-        print('Error. Scale factor is larger than 1.')
-        return
-    gaussian_std = gaussian_std
-    kernel_size = 16
-    gaussian_down = utils.gaussian_downsample(kernel_size,gaussian_std,int(1/scale),pad=True) #gaussian downsample with zero padding
-    return gaussian_down.to(DEVICE)
+base = ''
 
-def WLoss(args, input_img, ref_pat, model, psi):
-    '''
-    Computes the proposed wasserstein loss fct consisting of a MSELoss and a Wasserstein regularizer
-    '''
-    lam = args.lam
-    n_patches_out = args.n_patches_out
-    patch_size = args.patch_size
-    n_iter_psi = args.n_iter_psi
-    keops = args.keops
-    
-    im2patch = utils.patch_extractor(patch_size,center=args.center)
-    
-    num_ref = ref_pat.shape[0] #number of patches of reference image
-    patch_weights = torch.ones(num_ref,device=DEVICE,dtype=torch.float) #same weight for all patches
-    
-    semidual_loss = utils.semidual(ref_pat,usekeops=keops) 
-    semidual_loss.psi.data = psi #update the maximizer psi from previous step
-    pred = model(input_img) #superresolution of input_img
-    
-    #sum up all patches of whole batch
-    inp_pat = torch.empty(0, device = DEVICE)
-    for k in range(pred.shape[0]):
-        inp = im2patch(pred[k,:,:,:].unsqueeze(0)) #use all patches of input_img
-        inp_pat = torch.cat([inp_pat,inp],0)
-    inp = inp_pat
-    
-    #gradient ascent to find maximizer psi for dual formulation of W2^2
-    optim_psi = torch.optim.ASGD([semidual_loss.psi], lr=1e-0, alpha=0.5, t0=1)
-    for i in range(n_iter_psi):
-        sem = -semidual_loss(inp,patch_weights)
-        optim_psi.zero_grad()
-        sem.backward(retain_graph=True)
-        optim_psi.step()
-    semidual_loss.psi.data = optim_psi.state[semidual_loss.psi]['ax']
-    psi = semidual_loss.psi.data #update psi
-    
-    reg = semidual_loss(inp,patch_weights) #wasserstein regularizer 
-    
-    down_pred = operator(pred) #downsample pred by scale_factor
+class Wasserstein_trainer(nn.Module):
+    def __init__(self,net,optimizer,operator,trainset,valset,
+                    ref_pat,patch_size,lam,
+                    patches_out=10000,psi_iter=20,keops=True,
+                    center=False):
+        super().__init__()
+        self.net = net
+        self.optimizer = optimizer
+        self.operator = operator
+        self.trainset = trainset
+        self.valset = valset
+        self.ref_pat = ref_pat
+        self.patch_size = patch_size
+        self.lam = lam
+        self.patches_out = patches_out
+        self.psi_iter = psi_iter
+        self.keops = keops
+        self.center = center
+        self.data_fid = nn.MSELoss()
+        #create semidual version of Wasserstein
+        self.semidual_loss = utils.semidual(self.ref_pat,device=DEVICE,
+                                    usekeops=self.keops)
+        #patch extractor
+        self.im2patch = utils.patch_extractor(self.patch_size,
+                                        center=self.center)
 
-    loss_fct = nn.MSELoss()
-    loss = loss_fct(down_pred,input_img) #||f(G(y)) - y||^2
-    total_loss = loss + lam * reg
-    
-    return [total_loss,loss,lam*reg,psi]
+    def WLoss(self,inp):
+        '''
+        Computes the proposed wasserstein loss 
+        '''
+        optim_psi = torch.optim.ASGD([self.semidual_loss.psi], 
+                                    lr=1e-0, alpha=0.5, t0=1)
+        tmp_inp = inp.detach()
+        for i in range(self.psi_iter):
+            sem = -self.semidual_loss(tmp_inp)
+            optim_psi.zero_grad()
+            sem.backward()
+            optim_psi.step()
+        self.semidual_loss.psi.data = optim_psi.state[self.semidual_loss.psi]['ax']
+        reg = self.semidual_loss(inp) #wasserstein regularizer 
+        return reg
 
+    def train(self,batch_size,epochs,savename):
+        train_loader = DataLoader(self.trainset,batch_size=batch_size,
+                            shuffle=True,drop_last=True)
+        val_loader = DataLoader(self.valset,
+                            batch_size=1,shuffle=False)
+        
+        val_loss = float('inf')
+        writer = SummaryWriter(
+                        f'{base}checkpoints/tensorboard_logs/{savename}')
 
-def training(trainset, model, reference_img, batch_size, epochs, args, opti):
-    '''
-    training process
-    '''
-    numb_train_img = trainset.shape[0] #number of all img
-    
-    #create random batches:
-    idx = torch.randperm(numb_train_img)
-    batch_lr = [] #list of batches
-    for i in range(0,numb_train_img,batch_size):
-        batch_lr.append(trainset[i:(i+batch_size),...])
-    
-    #create maximizer psi
-    psi_length = args.n_patches_out #length of vector psi
-    psi_list = []
-    for i in range(len(batch_lr)):
-        psi_list.append(torch.zeros(psi_length, device = DEVICE)) #create a list consisting of psi
-
-    #create random patches of reference image
-    im2patch = utils.patch_extractor(args.patch_size,center=args.center)
-    ref = im2patch(reference_img,args.n_patches_out)
-    
-    a_psnr_list = [] #for validation
-    loss_list = []; reg_list = []; MSE_list = [] #for plot
-
-    for t in tqdm(range(epochs)):
-        a_totalloss = 0; a_MSE = 0; a_reg = 0
-        ints = random.sample(range(0,len(batch_lr)),len(batch_lr)) #random order of batches
-        for i in tqdm(ints):
-            psi_temp = psi_list[i] #choose corresponding saved maximizer psi  
-            [total_loss,loss,reg,p] = WLoss(args, batch_lr[i], ref, model, psi_temp)  
-    
-            #backpropagation
-            opti.zero_grad()
-            total_loss.backward()
-            opti.step()
+        for ep in range(epochs):
+            loop = tqdm(train_loader, desc = f'Epoch {ep+1} / {epochs}')
+            running_loss = 0 
+            running_w2 = 0
+            running_l2 = 0
             
-            total_loss = total_loss.item(); loss = loss.item(); reg = reg.item()
-            a_totalloss += total_loss; a_MSE += loss; a_reg += reg
-            psi_list[i] = p #update psi
+            for obs in loop:
+                self.optimizer.zero_grad()
+                obs = obs.to(DEVICE)
+                pred = self.net(obs)
+                pred_pat = self.im2patch(pred)
+                down_pred = self.operator(pred)
+                
+                wloss = self.WLoss(pred_pat)
+                l2 = self.data_fid(down_pred,obs) #||f(G(y)) - y||^2
+                loss = l2 + self.lam * wloss
+                
+                loss.backward()
+                self.optimizer.step()
+                
+                running_loss += loss.item()
+                running_w2 += wloss.item()
+                running_l2 += l2.item()
+                
+            # tensorboard values
+            writer.add_scalar(f'Loss/loss', running_loss/len(train_loader), ep+1)
+            writer.add_scalar(f'Loss/w2', running_w2/len(train_loader), ep+1)
+            writer.add_scalar(f'Loss/l2', running_l2/len(train_loader), ep+1)
 
-        a_totalloss = a_totalloss/len(batch_lr); a_MSE = a_MSE/len(batch_lr); a_reg = a_reg/len(batch_lr)
-        loss_list.append(a_totalloss); MSE_list.append(a_MSE); reg_list.append(a_reg)
-        
-        if not os.path.isdir('checkpoints'):
-            os.mkdir('checkpoints')
-        
-        val_step = 10
-        if (t+1)%val_step == 0:
-            print(f'------------------------------- \nValidation step')
-            val_len = len(args.val)
-            a_psnr = 0
-            for i in range(val_len):
-                with torch.no_grad():
-                    pred = net(args.val[i][0])
-                psnr_val = utils.psnr(pred,args.val[i][1],40)
-                a_psnr += psnr_val
-            a_psnr = a_psnr / val_len
-            print(f'Average Validation PSNR: {a_psnr}')    
-            a_psnr_list.append(a_psnr)
-            plt.plot(list(range(val_step,val_step*len(a_psnr_list)+val_step,val_step)),a_psnr_list, 'k')
-            title = 'Avarage PSNR ' + str(round(a_psnr,2))
-            plt.title(title)
-            plt.savefig('checkpoints/ValidatonPSNR_FS.pdf')
-            plt.close()
-            print(f'-------------------------------')
-        
-        #save a checkpoint
-        if (t+1)%30 == 0:
-            torch.save({'net_state_dict': model.state_dict()}, 'checkpoints/checkpoint_FS.pth')
+            #validation
             with torch.no_grad():
-                pred_hr = model(lr)
-            if not os.path.isdir('checkpoints/tmp'):
-                os.mkdir('checkpoints/tmp')
-            utils.save_img(pred_hr,'checkpoints/tmp/pred'+str(t+1))
-            plt.ylabel('Loss')
-            plt.xlabel('Epoch')
-            plt.plot(list(range(len(loss_list))), loss_list, 'k-.', label='avarage loss')
-            plt.plot(list(range(len(MSE_list))), MSE_list, 'k-', label='avarage MSE')
-            plt.plot(list(range(len(reg_list))), reg_list, 'k:', label='avarage Reg')
-            plt.legend(loc='upper right')
-            plt.yscale('log')
-            plt.savefig('checkpoints/losscurve_FS.pdf')
-            plt.close()
+                running_mse = 0
+                for gt,obs in val_loader:
+                    pred = self.net(obs.to(DEVICE))
+                    mse = self.data_fid(pred,gt.to(DEVICE))
+                    running_mse += mse.item()
+            writer.add_scalar(f'Loss/val_mse', running_mse/len(val_loader), ep+1)
+            if (ep+1)%50==0:
+                writer.add_image('Valid', pred.squeeze(0), ep+1)
+            writer.flush()
+            
+            if running_mse/len(val_loader) < val_loss:
+                val_loss = running_mse/len(val_loader)
+                torch.save({'net_state_dict':self.net.state_dict(), 
+                            'epoch': ep}, 
+                            f'{base}checkpoints/{savename}/minval.pth')
+        writer.close()
 
 
-    
-retrain = False
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(prog='Wasserstein Trainer',
+                                usage='Implementation of the WPPNet')
+    train_group = parser.add_argument_group('Training parameters')
+    train_group.add_argument('-t', '--train', action='store_true', 
+                            help='Training option.')
+    train_group.add_argument('--batch_size', type=int, default=32)
+    train_group.add_argument('--epochs', type=int, default=500)
+    train_group.add_argument('-lr', '--learning_rate', default=1e-4)
+    
+    setting_group = parser.add_argument_group('Settings')
+    setting_group.add_argument('--imageclass', type=str, default='FS', 
+                            choices = ['FS','FS_registered'],
+                            help='Choose image class')
+    setting_group.add_argument('--num', type=int)
+    setting_group.add_argument('-p', '--patch_size', type=int, default=6)  
+    setting_group.add_argument('--keops', action='store_false',
+                            help='Use keops')
+    setting_group.add_argument('--center', action='store_true',
+                            help='Center the patches') 
+    
+    wloss_group = parser.add_argument_group('Wasserstein computation')                    
+    wloss_group.add_argument('-l', '--lam', type=float, default=0.02,
+                            help='Regularization strength')
+    wloss_group.add_argument('-it', '--n_iter_psi', type=int, default=20,
+                            help='Number of iterations for finding \
+                            maximizer psi in dual Wasserstein formulation')
+    wloss_group.add_argument('-pat_out', '--n_patches_out', type=int, 
+                            default=10000, help='Number of patches from \
+                            reference image to compute Wasserstein loss')
+    args = parser.parse_args()
+    args.scale = 4 if args.imageclass == 'FS' else 2
+    
     if not os.path.isdir('results'):
        os.mkdir('results')    
-    print('Superresolution with the material FS')
-    scale_factor = 4
-    net = model.small_acnet.Net(scale=scale_factor).to(device=DEVICE)
     
-    hr = utils.imread('test_img/hr_FS.png')
-    lr = utils.imread('test_img/lr_FS.png')
-    #  = operator(hr) + 0.01*torch.randn_like(operator(hr))
-    if retrain:
-        #inputs
-        image_class = 'FS'
-        operator = Downsample(scale = 1/scale_factor, gaussian_std = 2)
+    net = model.small_acnet.Net(scale=args.scale).to(DEVICE)
 
-        lr_train = utils.Trainset(image_class = image_class, size = 1000)
-        val = utils.Validationset(image_class = image_class)	
-        lr_size = lr_train.shape[2]
+    print(f'Superresolution of the material {args.imageclass} with magnification factor 4')
+    
+    if args.train:
+        if args.imageclass == 'FS':
+            operator = utils.SR_operator(scale_factor=1/args.scale, 
+                            gaussian_std = 2)
+        else:
+            from FS_estimate_operator import SR_operator
+            operator = SR_operator(1/args.scale).to(DEVICE)
+            operator.load_state_dict(torch.load('model/estimated_operator.pt', map_location = torch.device(DEVICE)))
 
-        args=argparse.Namespace()
-        args.lam=12.5/lr_size**2
-        args.n_patches_out=10000
-        args.patch_size=6
-        args.n_iter_psi=20
-        args.val = val
-        args.keops = True
-        args.center = False
 
-        reference_img = utils.imread('test_img/ref_FS.png')        
+        opti = torch.optim.Adam(net.parameters(), lr=args.learning_rate)    
         
-        #training process
-        batch_size = 25
-        epochs = 420
+        lr_train = utils.SiC(datafile = 
+                    f'{base}training_img/train_{args.imageclass}.h5',
+                    split = 'train')
+        val = utils.SiC(datafile = 
+                    f'{base}training_img/val_{args.imageclass}.h5',
+                    split = 'val')
+                    
+        #create random patches of reference image
+        im2patch = utils.patch_extractor(args.patch_size,center=args.center)
+        reference_img = utils.imread(f'test_img/ref_{args.imageclass}.png')        
+        ref = im2patch(reference_img,args.n_patches_out)      
         
-        learning_rate = 1e-4
-        OPTIMIZER = torch.optim.Adam(net.parameters(), lr=learning_rate)    
+        wtrainer = Wasserstein_trainer(net=net,optimizer=opti,
+                    operator=operator,trainset=lr_train,valset=val,
+                    ref_pat = ref,patch_size=args.patch_size,
+                    lam=args.lam,patches_out=args.n_patches_out,
+                    psi_iter=args.n_iter_psi,keops=args.keops,
+                    center=args.center)
+                    
+        savename = f'{args.imageclass}_exp{args.num}'
+        if not os.path.isdir(f'{base}checkpoints/{savename}'):
+            os.makedirs(f'{base}checkpoints/{savename}')
+        #save config
+        with open(f'{base}checkpoints/{savename}/config.json', 'w') as f:
+            json.dump(vars(args), f, indent=4)            
         
-        training(lr_train,net,reference_img,batch_size,epochs,args=args,opti=OPTIMIZER)
+        #start training process
+        wtrainer.train(args.batch_size,args.epochs,savename)
+        
+        torch.save({'net_state_dict': wtrainer.net.state_dict(), 
+                    'optimizer_state_dict': wtrainer.optimizer.state_dict()},
+                    f'{base}results/weights_{args.imageclass}.pth')   
+
+    else:
         with torch.no_grad():
+            hr = utils.imread(f'test_img/hr_{args.imageclass}.png')
+            lr = utils.imread(f'test_img/lr_{args.imageclass}.png')
+            #  = operator(hr) + 0.01*torch.randn_like(operator(hr))
+            name = f'{base}results/weights_{args.imageclass}.pth'
+            weights = torch.load(name,map_location=DEVICE)
+            net.load_state_dict(weights['net_state_dict'])
             pred = net(lr)
-        torch.save({'net_state_dict': net.state_dict(), 'optimizer_state_dict': OPTIMIZER.state_dict()},
-                    'results/weights_FS.pth')        
-        utils.save_img(pred,'results/W2_FS')
-            
-    if not retrain:
-        weights = torch.load('results/weights_FS.pth')
-        net.load_state_dict(weights['net_state_dict'])
-        pred = net(lr)
-        utils.save_img(pred,'results/W2_FS')
-
+            io.imsave(f'{base}results/W2_{args.imageclass}.png',
+                            np.clip(pred.squeeze().numpy(),0,1))

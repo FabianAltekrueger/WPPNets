@@ -26,14 +26,8 @@ from torch import nn
 import numpy as np
 import math
 import skimage.io as io
-import os
-import skimage.metrics as sm
-from natsort import os_sorted
 from torch.utils.data import Dataset
-import random
-from tqdm import tqdm
 import h5py
-
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

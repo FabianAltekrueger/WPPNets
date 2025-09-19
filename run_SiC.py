@@ -220,16 +220,16 @@ if __name__ == '__main__':
         
         torch.save({'net_state_dict': wtrainer.net.state_dict(), 
                     'optimizer_state_dict': wtrainer.optimizer.state_dict()},
-                    f'{base}checkpoints/{savename}/weights.pth')   
+                    f'{base}results/weights_{args.imageclass}_{args.accurate}_x{args.scale}.pth')   
         
     else:
         with torch.no_grad():
             hr = utils.imread('test_img/hr_SiC.png')
             lr = utils.imread(f'test_img/lr_SiC_x{args.scale}.png')
             #  = operator(hr) + 0.01*torch.randn_like(operator(hr))
-            name = f'checkpoints/SiC_{args.accurate}_x{args.scale}_exp{args.num}/minval.pth'
+            name = f'{base}results/weights_{args.imageclass}_{args.accurate}_x{args.scale}.pth'
             weights = torch.load(name,map_location=DEVICE)
             net.load_state_dict(weights['net_state_dict'])
             pred = net(lr)
-            io.imsave(f'results//pred_SiC_{args.accurate}_x{args.scale}_exp{args.num}.png',
+            io.imsave(f'{base}results/W2_SiC_{args.accurate}_x{args.scale}.png',
                         np.clip(pred.squeeze().numpy(),0,1))

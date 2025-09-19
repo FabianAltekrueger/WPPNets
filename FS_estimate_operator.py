@@ -2,7 +2,7 @@
 #
 # F. Altekrüger and J. Hertrich. 
 # WPPNets and WPPFlows: The Power of Wasserstein Patch Priors for Superresolution. 
-# ArXiv Preprint#2201.08157
+# SIAM Journal on Imaging Sciences, vol. 16(3), pp. 1033-1067.
 #
 # Please cite the paper, if you use the code.
 #
@@ -37,30 +37,38 @@ class SR_operator(nn.Module):
         self.kernel_size=kernel_size
 
     def forward(self,x):
-        kernel=torch.zeros_like(x)
-        diffs_kernel=np.array([kernel.shape[2]-self.kernel_size,kernel.shape[3]-self.kernel_size])
-        diffs_kernel_right=diffs_kernel//2
-        diffs_kernel_left=diffs_kernel-diffs_kernel_right
-        kernel[:,:,diffs_kernel_left[0]:-diffs_kernel_right[0],diffs_kernel_left[1]:-diffs_kernel_right[1]]=self.kernel.data
-        kernel=torch.fft.ifftshift(kernel)
-        x=torch.fft.fftn(x)/torch.prod(torch.tensor(x.shape,dtype=torch.float,device=DEVICE))
-        kernel_four=torch.fft.fftn(kernel)
-        x=kernel_four*x
-        x[:,0,0,0]+=self.bias.data
-        x=torch.fft.fftshift(x)
-        hr_shape=x.shape[2:]
-        if type(self.scale)==list:
-            lr_shape=[int(np.round(s*self.scale[t])) for t,s in enumerate(hr_shape)]
+        if len(x) > 1:
+            out = torch.empty(0,1,int(x.shape[2]*self.scale),
+                            int(x.shape[3]*self.scale),device=x.device)
+            for i in range(len(x)):
+                down = self.forward(x[i].unsqueeze(0))
+                out = torch.cat([out,down])
+            return out
         else:
-            lr_shape=[int(np.round(s*self.scale)) for s in hr_shape]
-        diffs=np.array([hr_shape[0]-lr_shape[0],hr_shape[1]-lr_shape[1]])
-        diffs_left=diffs//2
-        diffs_right=diffs-diffs_left
-        diffs_right[diffs_right==0]=-np.max(list(x.shape))
-        x=x[:,:,diffs_left[0]:-diffs_right[0],diffs_left[1]:-diffs_right[1]]
-        x=x*torch.prod(torch.tensor(x.shape,dtype=torch.float,device=DEVICE))
-        x=torch.real(torch.fft.ifftn(torch.fft.ifftshift(x)))
-        return x
+            kernel=torch.zeros_like(x)
+            diffs_kernel=np.array([kernel.shape[2]-self.kernel_size,kernel.shape[3]-self.kernel_size])
+            diffs_kernel_right=diffs_kernel//2
+            diffs_kernel_left=diffs_kernel-diffs_kernel_right
+            kernel[:,:,diffs_kernel_left[0]:-diffs_kernel_right[0],diffs_kernel_left[1]:-diffs_kernel_right[1]]=self.kernel.data
+            kernel=torch.fft.ifftshift(kernel)
+            x=torch.fft.fftn(x)/torch.prod(torch.tensor(x.shape,dtype=torch.float,device=DEVICE))
+            kernel_four=torch.fft.fftn(kernel)
+            x=kernel_four*x
+            x[:,0,0,0]+=self.bias.data
+            x=torch.fft.fftshift(x)
+            hr_shape=x.shape[2:]
+            if type(self.scale)==list:
+                lr_shape=[int(np.round(s*self.scale[t])) for t,s in enumerate(hr_shape)]
+            else:
+                lr_shape=[int(np.round(s*self.scale)) for s in hr_shape]
+            diffs=np.array([hr_shape[0]-lr_shape[0],hr_shape[1]-lr_shape[1]])
+            diffs_left=diffs//2
+            diffs_right=diffs-diffs_left
+            diffs_right[diffs_right==0]=-np.max(list(x.shape))
+            x=x[:,:,diffs_left[0]:-diffs_right[0],diffs_left[1]:-diffs_right[1]]
+            x=x*torch.prod(torch.tensor(x.shape,dtype=torch.float,device=DEVICE))
+            x=torch.real(torch.fft.ifftn(torch.fft.ifftshift(x)))
+            return x
 
 if __name__=='__main__':
     
